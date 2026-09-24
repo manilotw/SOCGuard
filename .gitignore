@@ -1,2 +1,24 @@
-.env
+# Виртуальное окружение
+.venv/
+venv/
+ENV/
+
+# Кэш Python
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Окружение и секреты
+.env
+
+# Логи и базы данных
+logs/*.log
+*.log
+data/
+*.db
+*.sqlite3
+
+# Системные файлы macOS и IDE
+.DS_Store
+.vscode/
+.idea/
