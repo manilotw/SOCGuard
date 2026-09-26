@@ -1,4 +1,4 @@
-# COS Project
+# SOC Project
 
 ### Как запустить?
 
