@@ -34,12 +34,10 @@ status_button.add(
 
 @bot.message_handler(commands=["start"])
 def start(message):
-    logger.info("User %s started the bot", message.chat.id)
-
     bot.send_message(
         message.chat.id,
         "🛡️ SOCGuard\n\n"
-        "Press the button below to check authentication status.",
+        "Press the button below to check the latest authentication attempts.",
         reply_markup=status_button,
     )
 
@@ -49,11 +47,6 @@ def send_status(message):
     logger.info(
         "Status requested by user %s",
         message.chat.id,
-    )
-
-    bot.send_message(
-        message.chat.id,
-        "🔍 Checking authentication logs...",
     )
 
     parser_path = os.path.join(
@@ -69,28 +62,24 @@ def send_status(message):
             check=True,
         )
 
-        output = result.stdout
-
-        logger.info("Parser executed successfully")
-
         events = []
 
-        for line in output.splitlines():
-            if not line.startswith("AuthEvent("):
-                continue
+        for line in result.stdout.splitlines():
+            if line.startswith("AuthEvent("):
+                events.append(line)
 
-            events.append(line)
+        latest_events = events[-5:]
 
-        if not events:
+        if not latest_events:
             bot.send_message(
                 message.chat.id,
-                "📊 No authentication events found.",
+                "📊 No authentication attempts found.",
             )
             return
 
-        response = "📊 Authentication Status\n\n"
+        response = "📊 Last 5 authentication attempts\n\n"
 
-        for event in events:
+        for event in latest_events:
             if "status='failed'" in event:
                 icon = "❌"
                 status = "FAILED"
@@ -106,6 +95,12 @@ def send_status(message):
         bot.send_message(
             message.chat.id,
             response,
+        )
+
+        logger.info(
+            "Sent %s latest events to user %s",
+            len(latest_events),
+            message.chat.id,
         )
 
     except subprocess.CalledProcessError as error:
@@ -130,4 +125,3 @@ if __name__ == "__main__":
     print("Бот запущен...")
 
     bot.infinity_polling()
-
