@@ -1,127 +1,153 @@
+
 import logging
 import os
-import subprocess
-import sys
 
 import telebot
 from dotenv import load_dotenv
+
+from database import (
+    get_recent_alerts,
+    get_recent_events,
+    init_db,
+    save_alerts,
+    save_events,
+)
+from detector import detect_brute_force
+from parser import parse_log
 
 
 load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s %(levelname)s %(message)s",
 )
-
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN is not set")
+    raise RuntimeError("BOT_TOKEN is missing from the .env file")
 
 bot = telebot.TeleBot(TOKEN)
 
-status_button = telebot.types.ReplyKeyboardMarkup(
+STATUS_BUTTON = "📊 Send me status"
+
+keyboard = telebot.types.ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
+keyboard.add(telebot.types.KeyboardButton(STATUS_BUTTON))
 
-status_button.add(
-    telebot.types.KeyboardButton("📊 Send me status")
-)
+
+def format_event(event):
+    status = event["status"]
+
+    if status == "failed":
+        icon = "❌"
+        label = "FAILED"
+    else:
+        icon = "✅"
+        label = "SUCCESS"
+
+    return (
+        f"{icon} {label}\n"
+        f"Time: {event['timestamp']}\n"
+        f"IP: {event['ip_address'] or 'Unknown'}\n"
+        f"User: {event['username'] or 'Unknown'}"
+    )
+
+
+def format_alert(alert):
+    return (
+        f"🚨 {alert['severity']} — Brute-force detected\n"
+        f"IP: {alert['ip_address']}\n"
+        f"Failed attempts: {alert['attempts']}\n"
+        f"Start: {alert['start_time']}\n"
+        f"End: {alert['end_time']}"
+    )
 
 
 @bot.message_handler(commands=["start"])
 def start(message):
     bot.send_message(
         message.chat.id,
-        "🛡️ SOCGuard\n\n"
-        "Press the button below to check the latest authentication attempts.",
-        reply_markup=status_button,
+        "Welcome to SOCGuard!\n"
+        "Press the button to check authentication logs.",
+        reply_markup=keyboard,
     )
 
 
-@bot.message_handler(func=lambda message: message.text == "📊 Send me status")
+@bot.message_handler(
+    func=lambda message: message.text == STATUS_BUTTON
+)
 def send_status(message):
-    logger.info(
-        "Status requested by user %s",
-        message.chat.id,
-    )
-
-    parser_path = os.path.join(
-        os.path.dirname(__file__),
-        "parser.py",
-    )
+    chat_id = message.chat.id
 
     try:
-        result = subprocess.run(
-            [sys.executable, parser_path],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        bot.send_message(chat_id, "🔍 Checking authentication logs...")
 
-        events = []
+        init_db()
 
-        for line in result.stdout.splitlines():
-            if line.startswith("AuthEvent("):
-                events.append(line)
+        events = parse_log()
+        alerts = detect_brute_force(events)
 
-        latest_events = events[-5:]
+        new_events = save_events(events)
+        new_alerts = save_alerts(alerts)
 
-        if not latest_events:
-            bot.send_message(
-                message.chat.id,
-                "📊 No authentication attempts found.",
-            )
-            return
-
-        response = "📊 Last 5 authentication attempts\n\n"
-
-        for event in latest_events:
-            if "status='failed'" in event:
-                icon = "❌"
-                status = "FAILED"
-            elif "status='success'" in event:
-                icon = "✅"
-                status = "SUCCESS"
-            else:
-                continue
-
-            response += f"{icon} {status}\n"
-            response += f"{event}\n\n"
+        recent_events = get_recent_events(5)
+        recent_alerts = get_recent_alerts(10)
 
         bot.send_message(
-            message.chat.id,
-            response,
+            chat_id,
+            "📊 SOCGuard Status\n"
+            f"Events found in logs: {len(events)}\n"
+            f"New events saved: {new_events}\n"
+            f"New alerts saved: {new_alerts}",
+            reply_markup=keyboard,
         )
 
-        logger.info(
-            "Sent %s latest events to user %s",
-            len(latest_events),
-            message.chat.id,
-        )
+        bot.send_message(chat_id, "🧾 Latest 5 authentication events:")
 
-    except subprocess.CalledProcessError as error:
-        logger.exception("Parser failed")
+        if recent_events:
+            for event in recent_events:
+                bot.send_message(chat_id, format_event(event))
+        else:
+            bot.send_message(chat_id, "No authentication events found.")
 
+        bot.send_message(chat_id, "🛡️ Brute-force alerts:")
+
+        if recent_alerts:
+            for alert in recent_alerts:
+                bot.send_message(chat_id, format_alert(alert))
+        else:
+            bot.send_message(chat_id, "No brute-force alerts recorded.")
+
+    except PermissionError:
+        logger.exception("Permission denied while reading authentication logs")
         bot.send_message(
-            message.chat.id,
-            f"❌ Parser error:\n{error.stderr}",
+            chat_id,
+            "❌ Permission denied while reading auth.log. "
+            "Check the bot user's log permissions.",
         )
 
-    except Exception as error:
-        logger.exception("Unexpected error")
-
+    except Exception:
+        logger.exception("Failed to check SOCGuard status")
         bot.send_message(
-            message.chat.id,
-            f"❌ Error:\n{error}",
+            chat_id,
+            "❌ Failed to check status. Check the server logs.",
         )
+
+
+@bot.message_handler(func=lambda message: True)
+def unknown_message(message):
+    bot.send_message(
+        message.chat.id,
+        "Press 📊 Send me status to check the logs.",
+        reply_markup=keyboard,
+    )
 
 
 if __name__ == "__main__":
-    logger.info("Bot is starting...")
-    print("Бот запущен...")
-
+    init_db()
+    logger.info("SOCGuard Telegram bot is starting")
     bot.infinity_polling()
