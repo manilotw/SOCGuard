@@ -22,3 +22,8 @@ data/
 .DS_Store
 .vscode/
 .idea/
+# Certificates and backup files
+*.crt
+*.pem
+*.key
+*.backup*

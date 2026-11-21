@@ -1,4 +1,3 @@
-
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -37,38 +36,34 @@ def detect_brute_force(
     for ip_address, timestamps in failed_by_ip.items():
         timestamps.sort()
         left = 0
-        max_attempts = 0
-        best_start = None
-        best_end = None
 
-        for right, current_time in enumerate(timestamps):
-            while current_time - timestamps[left] > window:
+        while left + threshold <= len(timestamps):
+            right = left + threshold - 1
+
+            if timestamps[right] - timestamps[left] > window:
                 left += 1
+                continue
+
+            while (
+                right + 1 < len(timestamps)
+                and timestamps[right + 1] - timestamps[left] <= window
+            ):
+                right += 1
 
             attempts = right - left + 1
+            severity = "HIGH" if attempts >= 10 else "MEDIUM"
 
-            if attempts > max_attempts:
-                max_attempts = attempts
-                best_start = timestamps[left]
-                best_end = current_time
-
-        if max_attempts < threshold:
-            continue
-
-        if max_attempts >= 10:
-            severity = "HIGH"
-        else:
-            severity = "MEDIUM"
-
-        alerts.append(
-            BruteForceAlert(
-                ip_address=ip_address,
-                attempts=max_attempts,
-                start_time=best_start.isoformat(),
-                end_time=best_end.isoformat(),
-                severity=severity,
+            alerts.append(
+                BruteForceAlert(
+                    ip_address=ip_address,
+                    attempts=attempts,
+                    start_time=timestamps[left].isoformat(),
+                    end_time=timestamps[right].isoformat(),
+                    severity=severity,
+                )
             )
-        )
+
+            left = right + 1
 
     return alerts
 
